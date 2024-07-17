@@ -81,7 +81,8 @@ namespace arayüz_örnek
         public Form1()
         {
             InitializeComponent();
-            chromiumWebBrowser1.LoadHtml(File.ReadAllText(@"index.html"));
+            DisableAllControls(this);
+            chromiumWebBrowser1.LoadHtml(File.ReadAllText(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/index.html"));
         }
 
 
@@ -103,33 +104,34 @@ namespace arayüz_örnek
             SetWindowLong(hWnd, GWL_STYLE, style);
         }
         Process simApplication;
+        void Kill(string app)
+        {
+            foreach (var process in Process.GetProcessesByName(app))
+            {
+                process.Kill();
+            }
+        }
+        //Loglama Düzeltilcek
+        //Grafiklere İsim Eklenilcek
+        //HYI Test Edilcek
+        //HYI Verilerinin Yerleri Düzeltilcek
         private void Form1_Load(object sender, EventArgs e)
         {
             try
             {
                 timer2.Start();
-                string proc = "3DSim";
-                foreach (var process in Process.GetProcessesByName(proc))
-                {
-                    process.Kill();
-                } 
+                Kill("3DSim");
+                Kill("3DSim.exe");
             }
-            catch (Exception)
-            {
-            }
+            catch (Exception) { }
             try
             {
-
-                // Unity oyununun .exe dosyasının yolu
                 string _3DSimExePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"\roketunity\3DSim_New\3DSim";
-
-                // ProcessStartInfo nesnesini oluşturun ve ayarları belirtin
                 ProcessStartInfo startInfo = new ProcessStartInfo();
                 startInfo.FileName = _3DSimExePath;
                 startInfo.WindowStyle = ProcessWindowStyle.Maximized;
                 simApplication = Process.Start(startInfo);
                 simApplication.WaitForInputIdle();
-
                 MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
                 SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
                 MakeExternalWindowBorderless(simApplication.MainWindowHandle);
@@ -138,8 +140,6 @@ namespace arayüz_örnek
             {
                 Console.WriteLine("Hata: " + ex.Message);
             }
-
-
             dataGridView1.ColumnCount = 21;
             dataGridView1.Columns[0].Name = "Sayac";
             dataGridView1.Columns[1].Name = "İrtifa";
@@ -172,12 +172,13 @@ namespace arayüz_örnek
             MAP.HoldInvalidation = false;
             MAP.Zoom = 15;
             MAP.Position = new GMap.NET.PointLatLng(40.74208412258973, 29.942214732057536);
-
             MAP.MapProvider = GoogleSatelliteMapProvider.Instance;
+            timer3.Start();
         }
         //openPortToSendData
         private void openButton_Click(object sender, EventArgs e)
         {
+            button2.PerformClick();
             string[] ports = SerialPort.GetPortNames();
             comboBox1.Items.AddRange(ports);
             serialPort = new SerialPort(comboBox1.SelectedItem.ToString(), 9600, Parity.None, 8, StopBits.One);
@@ -193,19 +194,16 @@ namespace arayüz_örnek
 
                 try
                 {
-                    serialPort.Open(); // Bağlantı noktasını açın
+                    serialPort.Open();
                 }
                 catch (UnauthorizedAccessException ex)
                 {
                     MessageBox.Show("Erişim reddedildi: " + ex.Message);
-                    // Erişim reddedildi hatası alındığında burada işlemler yapılabilir
                 }
             }
-            else 
-                MessageBox.Show("Yavaş lan gaç tane basıyon"); 
-            
-        }
-
+            else
+                MessageBox.Show("Yavaş lan gaç tane basıyon");
+        } 
         private void DisplayReceivedData(string data)
         {
             try
@@ -213,9 +211,12 @@ namespace arayüz_örnek
                 if (InvokeRequired) BeginInvoke(new Action<string>(DisplayReceivedData), data);
                 else
                 {
-                    label27.Text = "Data:"+ a;
+                    data.Replace("*", "");
+                    data.Replace("+", "");
                     string[] veriler = data.Split(',');
-                    Sayac.Text = veriler[0].Replace("*", "");
+                    veriler[0] = veriler[0].Replace("*", "");
+                    veriler[0] = veriler[20].Replace("+", "");
+                    Sayac.Text = veriler[0];
                     İrtifa.Text = veriler[1];
                     RoketGPSirtifa.Text = veriler[2];
                     roketBoylam.Text = veriler[3];
@@ -236,9 +237,9 @@ namespace arayüz_örnek
                     hiz.Text = veriler[18];
                     tarih.Text = veriler[19];
                     saat.Text = veriler[20];
-                    yunuslamaacisi.Text = "23"; 
-                    
-                    ID.Text = "284994";
+                    yunuslamaacisi.Text = "23";
+                    if (richTextBox2.Text.Length >= 2000000)
+                        ID.Text = "284994";
                     string _ID = "284994";
                     string _Sayac = veriler[0].Replace("*", "");
                     string _İrtifa = veriler[1];
@@ -363,7 +364,7 @@ namespace arayüz_örnek
                     package[75] = calculateCRC(package);
                     package[76] = 0x0D;
                     package[77] = 0x0A;
-                    if(sendData) stream_sendDataToHYI.Write(package, 0, package.Length);
+                    if (sendData) stream_sendDataToHYI.Write(package, 0, package.Length);
                     //udp portundan veri gönderilcek 
                     try
                     {
@@ -398,14 +399,18 @@ namespace arayüz_örnek
             }
             catch (Exception e)
             {
-                richTextBox1.Text+="Hata: " + e.ToString()+Environment.NewLine;
+                Log(e.Message);
             }
 
+        }
+        void Log(string log)
+        {
+            richTextBox1.Text = "Log:" + log + Environment.NewLine;
         }
         public void openPortToSendData(string port)
         {
             try
-            { 
+            {
                 stream_sendDataToHYI.PortName = port;
                 stream_sendDataToHYI.BaudRate = 19200;
                 stream_sendDataToHYI.Parity = Parity.None;
@@ -427,7 +432,7 @@ namespace arayüz_örnek
             }
             return Convert.ToByte(check_sum % 256);
         }
-       
+
         private byte[] getBytes(float value)
         {
             var buffer = BitConverter.GetBytes(value);
@@ -437,15 +442,15 @@ namespace arayüz_örnek
             //}
             return new[] { buffer[0], buffer[1], buffer[2], buffer[3] };
         }
-        string a = "";  
+        string a = "";
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
-        { 
-            int index = a.IndexOf("*"); 
+        {
+            int index = a.IndexOf("*");
             if (index >= 0)
             {
                 a = a.Substring(index); // 0. indekse kadar olan verileri siliyoruz.
-            } 
-            a += serialPort.ReadExisting(); 
+            }
+            a += serialPort.ReadExisting();
             if (a.Contains("*"))
             {
                 if (a.Contains("+"))
@@ -465,7 +470,13 @@ namespace arayüz_örnek
         }
         private void closeButton_Click(object sender, EventArgs e)
         {
+            try
+            {
+                button1.PerformClick();
+            }
+            catch (Exception) { }
             serialPort.Close();
+            CSVOut();
         }
         private void dataGridView1_CellContentClick(object sender, DataGridViewCellEventArgs e)
         {
@@ -510,16 +521,6 @@ namespace arayüz_örnek
                 MAP.Visible = true;
             }
         }
-
-        private void chromiumWebBrowser1_VisibleChanged(object sender, EventArgs e)
-        {
-
-            if (!scaled && chromiumWebBrowser1.Visible)
-            {
-                ActiveForm.Scale(1.25f);
-                scaled = true;
-            }
-        }
         int unitywindowtime = 0;
         private void timer1_Tick(object sender, EventArgs e)
         {
@@ -531,41 +532,157 @@ namespace arayüz_örnek
                 MakeExternalWindowBorderless(simApplication.MainWindowHandle);
             }
             else
-            { 
+            {
                 timer1.Enabled = false;
-            } 
-        } 
+                EnableAllControls(this);
+            }
+        }
+        private void DisableAllControls(System.Windows.Forms.Control parent)
+        {
+            foreach (System.Windows.Forms.Control control in parent.Controls)
+            {
+                if (control.Name != connectButton.Name) control.Enabled = false;
+
+                // Eğer kontrolün alt kontrolleri varsa, onları da devre dışı bırak
+                if (control.HasChildren)
+                {
+                    DisableAllControls(control);
+                }
+            }
+        }
+        private void EnableAllControls(System.Windows.Forms.Control parent)
+        {
+            foreach (System.Windows.Forms.Control control in parent.Controls)
+            {
+                control.Enabled = true;
+
+                // Eğer kontrolün alt kontrolleri varsa, onları da devre dışı bırak
+                if (control.HasChildren)
+                {
+                    EnableAllControls(control);
+                }
+            }
+        }
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             try
             {
-                string proc = "My project (1)";
-                foreach (var process in Process.GetProcessesByName(proc))
-                {
-                    process.Kill();
-                }
+                CSVOut();
+                Kill("My project (1)");
             }
             catch (Exception)
             { }
-        } 
+        }
+
+        private void CSVOut()
+        {
+            try
+            {
+                using (StreamWriter sw = new StreamWriter(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/data.csv"))
+                {
+                    for (int i = 0; i < dataGridView1.Columns.Count; i++)
+                    {
+                        sw.Write(dataGridView1.Columns[i].Name);
+                        if (i < dataGridView1.Columns.Count - 1)
+                        {
+                            sw.Write(",");
+                        }
+                    }
+                    sw.WriteLine();
+                    foreach (DataGridViewRow row in dataGridView1.Rows)
+                    {
+                        if (!row.IsNewRow)
+                        {
+                            for (int i = 0; i < dataGridView1.Columns.Count; i++)
+                            {
+                                sw.Write(row.Cells[i].Value?.ToString());
+                                if (i < dataGridView1.Columns.Count - 1)
+                                {
+                                    sw.Write(",");
+                                }
+                            }
+                            sw.WriteLine();
+                        }
+                    }
+                }
+                Log("CSV dosyası başarıyla oluşturuldu.");
+            }
+            catch (Exception ex)
+            {
+                Log("CSV dosyası oluşturulurken bir hata oluştu: " + ex.Message);
+            }
+        }
+
         private void timer2_Tick(object sender, EventArgs e)
         {
-            label27.Text = "Data:" + a;
+            try
+            {
+                richTextBox1.SelectionStart = richTextBox1.Text.Length;
+                richTextBox2.SelectionStart = richTextBox2.Text.Length;
+                richTextBox1.ScrollToCaret();
+                richTextBox2.ScrollToCaret();
+                if (serialPort.IsOpen) richTextBox2.Text += "Data:" + a + Environment.NewLine;
+            }
+            catch (Exception)
+            {
+            }
         }
-        bool sendData=false;
+        bool sendData = false;
         public void closePort_sendData()
         {
             if (stream_sendDataToHYI.IsOpen)
             {
                 stream_sendDataToHYI.Close();
                 sendData = false;
-            } 
+            }
         }
         private void button2_Click(object sender, EventArgs e)
         {
             sendData = true;
-            openPortToSendData(comboBox2.SelectedItem.ToString());
-        } 
+            try
+            {
+                openPortToSendData(comboBox2.SelectedItem.ToString());
+            }
+            catch (Exception) { }
+
+        }
+
+        private void timer3_Tick(object sender, EventArgs e)
+        {
+            this.WindowState = FormWindowState.Maximized;
+            connectButton.PerformClick();
+            Thread.Sleep(50);
+            this.WindowState = FormWindowState.Minimized;
+            Thread.Sleep(50);
+            this.WindowState = FormWindowState.Maximized;
+            Thread.Sleep(50);
+            connectButton.PerformClick();
+            Thread.Sleep(50);
+            connectButton.PerformClick();
+            this.Scale(1.295f);
+            timer3.Stop();
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            closePort_sendData();
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            if (!richTextBox1.Visible)
+            {
+                dataGridView1.Visible = false;
+                richTextBox1.Visible = true;
+                richTextBox2.Visible = true;
+            }
+            else
+            {
+                richTextBox1.Visible = false;
+                richTextBox2.Visible = false;
+                dataGridView1.Visible = true;
+            }
+        }
     }
 
 }
