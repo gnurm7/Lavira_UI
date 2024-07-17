@@ -78,6 +78,8 @@ namespace arayüz_örnek
             SetWindowPos(MainWindowHandle, new IntPtr(0), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
         }
         //end unity
+        byte durum,teamID = 23;
+
         public Form1()
         {
             InitializeComponent();
@@ -112,9 +114,11 @@ namespace arayüz_örnek
             }
         }
         //Loglama Düzeltilcek
+        //UI Düzeltilcek
         //Grafiklere İsim Eklenilcek
         //HYI Test Edilcek
         //HYI Verilerinin Yerleri Düzeltilcek
+        //HYI noktalı virgüller gelsin
         private void Form1_Load(object sender, EventArgs e)
         {
             try
@@ -178,7 +182,7 @@ namespace arayüz_örnek
         //openPortToSendData
         private void openButton_Click(object sender, EventArgs e)
         {
-            button2.PerformClick();
+            HYI();
             string[] ports = SerialPort.GetPortNames();
             comboBox1.Items.AddRange(ports);
             serialPort = new SerialPort(comboBox1.SelectedItem.ToString(), 9600, Parity.None, 8, StopBits.One);
@@ -203,7 +207,8 @@ namespace arayüz_örnek
             }
             else
                 MessageBox.Show("Yavaş lan gaç tane basıyon");
-        } 
+        }
+
         private void DisplayReceivedData(string data)
         {
             try
@@ -211,11 +216,9 @@ namespace arayüz_örnek
                 if (InvokeRequired) BeginInvoke(new Action<string>(DisplayReceivedData), data);
                 else
                 {
-                    data.Replace("*", "");
-                    data.Replace("+", "");
                     string[] veriler = data.Split(',');
                     veriler[0] = veriler[0].Replace("*", "");
-                    veriler[0] = veriler[20].Replace("+", "");
+                    veriler[20] = veriler[20].Replace("+", "");
                     Sayac.Text = veriler[0];
                     İrtifa.Text = veriler[1];
                     RoketGPSirtifa.Text = veriler[2];
@@ -230,8 +233,7 @@ namespace arayüz_örnek
                     ivmeX.Text = veriler[11];
                     ivmeY.Text = veriler[12];
                     ivmeZ.Text = veriler[13];
-                    Durum.Text = veriler[14];
-                    CRC.Text = veriler[15];
+                    Durum.Text = veriler[14]; 
                     pilgerilim.Text = veriler[16];
                     sicaklik.Text = veriler[17];
                     hiz.Text = veriler[18];
@@ -239,8 +241,9 @@ namespace arayüz_örnek
                     saat.Text = veriler[20];
                     yunuslamaacisi.Text = "23";
                     if (richTextBox2.Text.Length >= 2000000)
-                        ID.Text = "284994";
-                    string _ID = "284994";
+                        richTextBox2.Text = "";
+                    ID.Text = teamID.ToString();
+                    string _ID = "194";
                     string _Sayac = veriler[0].Replace("*", "");
                     string _İrtifa = veriler[1];
                     string _RoketGPSirtifa = veriler[2];
@@ -269,9 +272,8 @@ namespace arayüz_örnek
                     package[1] = 0xFF;
                     package[2] = 0x54;
                     package[3] = 0x52;
-                    byte teamID;
                     byte counter;
-                    package[4] = byte.TryParse(_ID, out teamID) ? teamID : (byte)0; //teamID 
+                    package[4] = teamID; //teamID 
                     package[5] = byte.TryParse(_Sayac, out counter) ? counter : (byte)0; //counter
 
                     package[6] = getBytes(float.Parse(_İrtifa))[0];
@@ -359,9 +361,10 @@ namespace arayüz_örnek
                     package[72] = getBytes(float.Parse(_yunuslamaacisi))[2];
                     package[73] = getBytes(float.Parse(_yunuslamaacisi))[3];
                     //state                          
-                    package[74] = getBytes(float.Parse(_Durum))[0];
+                    package[74] = byte.TryParse(_Durum,out durum)?durum:(byte)0;
                     //crc
                     package[75] = calculateCRC(package);
+                    CRC.Text = package[75].ToString();
                     package[76] = 0x0D;
                     package[77] = 0x0A;
                     if (sendData) stream_sendDataToHYI.Write(package, 0, package.Length);
@@ -399,13 +402,13 @@ namespace arayüz_örnek
             }
             catch (Exception e)
             {
-                Log(e.Message);
+                Log(e.ToString());
             }
 
         }
         void Log(string log)
         {
-            richTextBox1.Text = "Log:" + log + Environment.NewLine;
+            richTextBox1.Text += "Log:" + log + Environment.NewLine;
         }
         public void openPortToSendData(string port)
         {
@@ -472,6 +475,7 @@ namespace arayüz_örnek
         {
             try
             {
+                closePort_sendData();
                 button1.PerformClick();
             }
             catch (Exception) { }
@@ -636,15 +640,19 @@ namespace arayüz_örnek
                 sendData = false;
             }
         }
-        private void button2_Click(object sender, EventArgs e)
+        private void HYI()
         {
-            sendData = true;
             try
             {
+                sendData = true;
+                Log("HYI");
                 openPortToSendData(comboBox2.SelectedItem.ToString());
             }
-            catch (Exception) { }
-
+            catch (Exception ex)
+            {
+                Log(ex.Message);
+                sendData = false;
+            }
         }
 
         private void timer3_Tick(object sender, EventArgs e)
@@ -663,11 +671,6 @@ namespace arayüz_örnek
             timer3.Stop();
         }
 
-        private void button1_Click(object sender, EventArgs e)
-        {
-            closePort_sendData();
-        }
-
         private void button3_Click(object sender, EventArgs e)
         {
             if (!richTextBox1.Visible)
@@ -682,6 +685,15 @@ namespace arayüz_örnek
                 richTextBox2.Visible = false;
                 dataGridView1.Visible = true;
             }
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            comboBox1.Items.Clear();
+            comboBox2.Items.Clear();
+            string[] ports = SerialPort.GetPortNames();
+            comboBox1.Items.AddRange(ports);
+            comboBox2.Items.AddRange(ports);
         }
     }
 
