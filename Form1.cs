@@ -18,7 +18,8 @@ using System.Timers;
 using System.Windows.Forms;
 using DocumentFormat.OpenXml.Office2016.Drawing.ChartDrawing;
 using DocumentFormat.OpenXml.Spreadsheet;
-using static System.Windows.Forms.AxHost; 
+using static System.Windows.Forms.AxHost;
+using System.IO.Packaging;
 
 namespace arayüz_örnek
 { 
@@ -29,17 +30,21 @@ namespace arayüz_örnek
         private float groundStationLng = 29.942214732057536f;
         private bool sendData = false;
         private SerialPort serialPort;
-        private int unitywindowtime = 0;
+        private int? unitywindowtime = 0;
         private byte durum, teamID = 23;
         private SerialPort stream_sendDataToHYI = new SerialPort();
         private string a = "";
         private bool scaled = false;
+        private short paket=0;
+       
         //Global Variables For General Purpose
 
         //Global Variables For Unity
         private Process simApplication;
         private Process unityProcess;
         private IntPtr unityWindowHandle;
+        private object packetcount;
+
         //Global Variables For Unity
 
         //Global Functions and Imports For Unity
@@ -84,22 +89,22 @@ namespace arayüz_örnek
             SetWindowLongA(MainWindowHandle, GWL_EXSTYLE, Style | WS_EX_DLGMODALFRAME);
             SetWindowPos(MainWindowHandle, new IntPtr(0), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
         }
-        private IntPtr FindWindowByProcessId(int processId)
-        {
-            Process[] processes = Process.GetProcesses();
-            foreach (Process process in processes)
-            {
-                if (process.Id == processId)
-                {
-                    return process.MainWindowHandle;
-                }
-            }
-            return IntPtr.Zero;
-        }
-        private void SetWindowStyle(IntPtr hWnd, int style)
-        {
-            SetWindowLong(hWnd, GWL_STYLE, style);
-        }
+        //private IntPtr FindWindowByProcessId(int processId)
+        //{
+        //    Process[] processes = Process.GetProcesses();
+        //    foreach (Process process in processes)
+        //    {
+        //        if (process.Id == processId)
+        //        {
+        //            return process.MainWindowHandle;
+        //        }
+        //    }
+        //    return IntPtr.Zero;
+        //}
+        //private void SetWindowStyle(IntPtr hWnd, int style)
+        //{
+        //    SetWindowLong(hWnd, GWL_STYLE, style);
+        //}
         //Global Functions and Imports For Unity
         public Form1()
         {
@@ -119,10 +124,10 @@ namespace arayüz_örnek
         //HYI noktalı virgüller gelsin
         private void Form1_Load(object sender, EventArgs e)
         {
-            MessageBox.Show(System.AppDomain.CurrentDomain.FriendlyName);
             try//Trying to kill old Unity Simulations and Timer2 tries to put new Unity App into UI
             {
                 timer2.Start();
+                timer4.Start();
                 Kill("3DSim");
             }
             catch (Exception ex) { Log(ex.ToString()); }
@@ -189,9 +194,10 @@ namespace arayüz_örnek
             try
             {
                 HYI();
-                ListComPorts();
                 serialPort = new SerialPort(comboBox1.SelectedItem.ToString(), 9600, Parity.None, 8, StopBits.One);//Serial Port Settings
                 serialPort.DataReceived += SerialPort_DataReceived;
+                paket = short.Parse(Sayac.Text);
+                timer2.Start();
                 if (!serialPort.IsOpen)
                 {
                     serialPort.PortName = comboBox1.SelectedItem.ToString();
@@ -215,9 +221,10 @@ namespace arayüz_örnek
                 if (InvokeRequired)
                     BeginInvoke(new Action<string>(DisplayReceivedData), data);
                 else
-                {
+                {  
                     if (richTextBox2.Text.Length >= 2000000)
                         richTextBox2.Text = "";
+                    paket++;
                     string[] veriler = data.Split(',');
                     veriler[0] = veriler[0].Replace("*", "");
                     veriler[20] = veriler[20].Replace("+", "");
@@ -390,6 +397,7 @@ namespace arayüz_örnek
                     MAP.Zoom = 15;
                     chromiumWebBrowser1.EvaluateScriptAsync("delLastMark();");//GoogleMap(not GMap) Delete Marks
                     chromiumWebBrowser1.EvaluateScriptAsync("setmark(" + roketBoylam.Text + "," + roketEnlem.Text + "," + GörevYüküEnlem.Text + "," + GörevYüküBoylam.Text + ");");//GoogleMap Add Marks
+                    GC.Collect();
                 }
             }
             catch (Exception ex) { Log(ex.ToString()); }
@@ -446,6 +454,7 @@ namespace arayüz_örnek
         }
         private void closeButton_Click(object sender, EventArgs e)
         {
+            timer2.Stop();
             try
             {
                 closePort_sendData();
@@ -515,6 +524,8 @@ namespace arayüz_örnek
             else
             {
                 timer1.Enabled = false;
+                timer1.Stop();
+                unitywindowtime = null;
                 EnableAllControls(this);
             }
         }
@@ -546,7 +557,7 @@ namespace arayüz_örnek
             catch (Exception ex) { Log(ex.ToString()); }
         }
         private void CSVOut()//CSV Output To The Desktop
-        {
+        {//buraya bak
             try
             {
                 using (StreamWriter sw = new StreamWriter(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/data.csv"))
@@ -584,7 +595,10 @@ namespace arayüz_örnek
                 richTextBox2.SelectionStart = richTextBox2.Text.Length;
                 richTextBox1.ScrollToCaret();
                 richTextBox2.ScrollToCaret();
+                dataGridView1.Rows.Add(a);
+                //Datagridview'ı aşağı kaydıran komutu
                 if (serialPort.IsOpen) richTextBox2.Text += "Data:" + a + Environment.NewLine;
+                dataGridView1.FirstDisplayedScrollingRowIndex = dataGridView1.Rows.Count - 1;
             }
             catch (Exception ex) { Log(ex.ToString()); }
         }
@@ -640,6 +654,11 @@ namespace arayüz_örnek
                 dataGridView1.Visible = true;
             }
         }
+        private void timer4_Tick(object sender, EventArgs e)
+        {
+            PAKET.Text = paket.ToString();
+            paket = 0;
+        } 
         private void button4_Click(object sender, EventArgs e)//Refresh Com Ports Button
         {
             try
