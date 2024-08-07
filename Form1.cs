@@ -1,52 +1,62 @@
 ﻿using CefSharp;
-using CefSharp.DevTools.Network;
-using CefSharp.SchemeHandler;
-using CefSharp.WinForms;
-using DocumentFormat.OpenXml.Drawing.Charts;
+using CefSharp.DevTools.CacheStorage;
+using DocumentFormat.OpenXml.Bibliography;
 using GMap.NET;
 using GMap.NET.MapProviders;
+using GMap.NET.WindowsForms.Markers;
+using GMap.NET.WindowsForms;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.IO.Ports;
+using System.Linq;
+using System.Management;
 using System.Net.Sockets;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Timers;
 using System.Windows.Forms;
-using DocumentFormat.OpenXml.Office2016.Drawing.ChartDrawing;
-using DocumentFormat.OpenXml.Spreadsheet;
-using static System.Windows.Forms.AxHost;
-using System.IO.Packaging;
-
 namespace arayüz_örnek
-{ 
+{
     public partial class Form1 : Form
     {
         //Global Variables For General Purpose 
         private float groundStationLat = 40.74208412258973f;
         private float groundStationLng = 29.942214732057536f;
+        private float vinsanLat = 40.7431761f;
+        private float vinsanLng = 29.9412449f;
+        internal readonly GMapOverlay objects = new GMapOverlay("objects");
+        GMapOverlay markers = new GMapOverlay("markers");
+        GMapMarker sat;
+        GMapMarker station = new GMarkerGoogle(
+             new PointLatLng(40.7431761, 29.9412449),//Aksaray Hisar Atış Alanı Koordinatları
+             GMarkerGoogleType.red_dot);
+        GMapOverlay polyOverlay = new GMapOverlay("polygons");
+        private bool vinsan = true;
         private bool sendData = false;
-        private SerialPort serialPort;
+        private SerialPort serialPortMain;
+        private SerialPort serialPortPayload;
+        private SerialPort serialPortHYI;
+        int mainBaudRate = 9600;
+        int payloadBaudRate = 9600;
+        int HYIBaudRate = 19200;
         private int? unitywindowtime = 0;
         private byte durum, teamID = 23;
         private SerialPort stream_sendDataToHYI = new SerialPort();
         private string a = "";
-        private bool scaled = false;
-        private short paket=0;
-       
+        private short paket = 0;
+        byte[] HYIPackage = new byte[78];
         //Global Variables For General Purpose
-
+        private static List<byte> tempBuffer = new List<byte>();
+        private static List<byte> tempBufferPayload = new List<byte>();
         //Global Variables For Unity
         private Process simApplication;
         private Process unityProcess;
         private IntPtr unityWindowHandle;
         private object packetcount;
-
-        //Global Variables For Unity
-
+        //Global Variables For Unity 
         //Global Functions and Imports For Unity
         [DllImport("user32.dll")]
         static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
@@ -75,6 +85,7 @@ namespace arayüz_örnek
         const int SWP_NOMOVE = 0x2;
         const int SWP_NOSIZE = 0x1;
         const int SWP_FRAMECHANGED = 0x20;
+        //Global Functions and Imports For Unity
         public void MakeExternalWindowBorderless(IntPtr MainWindowHandle)
         {
             int Style = 0;
@@ -89,39 +100,23 @@ namespace arayüz_örnek
             SetWindowLongA(MainWindowHandle, GWL_EXSTYLE, Style | WS_EX_DLGMODALFRAME);
             SetWindowPos(MainWindowHandle, new IntPtr(0), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
         }
-        //private IntPtr FindWindowByProcessId(int processId)
-        //{
-        //    Process[] processes = Process.GetProcesses();
-        //    foreach (Process process in processes)
-        //    {
-        //        if (process.Id == processId)
-        //        {
-        //            return process.MainWindowHandle;
-        //        }
-        //    }
-        //    return IntPtr.Zero;
-        //}
-        //private void SetWindowStyle(IntPtr hWnd, int style)
-        //{
-        //    SetWindowLong(hWnd, GWL_STYLE, style);
-        //}
         //Global Functions and Imports For Unity
         public Form1()
         {
+            if (vinsan)
+            {
+                groundStationLat = vinsanLat;
+                groundStationLng = vinsanLng;
+            }
             InitializeComponent();
             DisableAllControls(this);
             chromiumWebBrowser1.LoadHtml(File.ReadAllText(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/index.html"));
         }
-
         private void Kill(string app)//Process Kill(Killing Unity Simulation App and Ground Station App)
         {
             foreach (var process in Process.GetProcessesByName(app))
                 process.Kill();
-        } 
-        //UI Düzeltilcek(Tablo Görünümü Olsun Labellarda)
-        //HYI Test Edilcek
-        //HYI Verilerinin Yerleri Düzeltilcek
-        //HYI noktalı virgüller gelsin
+        }
         private void Form1_Load(object sender, EventArgs e)
         {
             try//Trying to kill old Unity Simulations and Timer2 tries to put new Unity App into UI
@@ -170,209 +165,379 @@ namespace arayüz_örnek
             //DataGridView Columns Name Setting Up
             ListComPorts();
             //Running up GMap with Cache for Offline use
-            MAP.CacheLocation = "C:\\Users\\Asus\\Desktop\\Cache";
-            MAP.DragButton = MouseButtons.Left;
+            if (File.Exists(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/Cache"))
+                MAP.CacheLocation = @Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/Cache"; 
             GMaps.Instance.Mode = AccessMode.ServerAndCache;
+            MAP.MapProvider = GoogleMapProvider.Instance; 
+            MAP.Position = new PointLatLng(station.Position.Lat, station.Position.Lng);//Aksaray Hisar Atış Alanı Koordinatları
+            MAP.MinZoom = 3;
+            MAP.MaxZoom = 20;
+            MAP.Zoom = 17;
             MAP.Manager.CancelTileCaching();
             MAP.HoldInvalidation = false;
-            MAP.Zoom = 15;
-            MAP.Position = new GMap.NET.PointLatLng(groundStationLat, groundStationLng);
-            MAP.MapProvider = GoogleSatelliteMapProvider.Instance;
+            markers.Markers.Add(station);
+            MAP.Overlays.Add(markers);
             //Running up GMap with Cache for Offline use
             timer3.Start();//UI positioning fixer 
+            //ss alınanacak grafikler
+            pressure_chart.MouseClick += new MouseEventHandler(Chart_MouseClick);
+            velocity_Chart.MouseClick += new MouseEventHandler(Chart_MouseClick);
+            altitude.MouseClick += new MouseEventHandler(Chart_MouseClick);
+
+        }
+        void AddSatPointToGMAP(double lat, double lng)
+        {
+            sat = new GMarkerGoogle(
+               new PointLatLng(lat, lng),
+               GMarkerGoogleType.red_dot);
+            sat.ToolTipMode = MarkerTooltipMode.Always;
+            sat.ToolTipText = getDistance(new PointLatLng(sat.Position.Lat, sat.Position.Lng), new PointLatLng(station.Position.Lat, station.Position.Lng)).ToString("N2") + " m";
+            markers.Markers.Add(sat);
+            MAP.Overlays.Add(markers);
+        }
+        double _double(string x)
+        {
+            return Convert.ToDouble(x);
+        }
+        void UpdateGMap(string lat1, string lng1, string lat2, string lng2)
+        {
+            polyOverlay.Polygons.Clear();
+            markers.Markers.Clear();
+            markers.Markers.Add(station);
+            AddSatPointToGMAP(_double(lat1), _double(lng1));
+            AddPayloadPointToGMAP(_double(lat2), _double(lng2));
+            List<PointLatLng> points = new List<PointLatLng>();
+            points.Add(new PointLatLng(_double(lat1), _double(lng1)));
+            points.Add(new PointLatLng(_double(lat2), _double(lng2)));
+            points.Add(new PointLatLng(station.Position.Lat, station.Position.Lng));
+            GMapPolygon polygon = new GMapPolygon(points, "mypolygon");
+            polygon.Stroke = new Pen(Color.Red, 3);
+            polygon.Fill = new SolidBrush(Color.Transparent);
+            polyOverlay.Polygons.Add(polygon);
+            MAP.Overlays.Add(polyOverlay);
+            MAP.Refresh();
+        }
+        void UpdateGMap(string lat1, string lng1)
+        {
+            polyOverlay.Polygons.Clear();
+            markers.Markers.Clear();
+            markers.Markers.Add(station);
+            AddSatPointToGMAP(_double(lat1), _double(lng1));
+            List<PointLatLng> points = new List<PointLatLng>();
+            points.Add(new PointLatLng(_double(lat1), _double(lng1)));
+            points.Add(new PointLatLng(station.Position.Lat, station.Position.Lng));
+            GMapPolygon polygon = new GMapPolygon(points, "mypolygon");
+            polygon.Stroke = new Pen(Color.Red, 3);
+            polygon.Fill = new SolidBrush(Color.Transparent);
+            polyOverlay.Polygons.Add(polygon);
+            MAP.Overlays.Add(polyOverlay);
+            MAP.Refresh();
+        }
+        void AddPayloadPointToGMAP(double lat, double lng)
+        {
+            GMapMarker payload = new GMarkerGoogle(
+                new PointLatLng(lat, lng),
+                GMarkerGoogleType.red_dot);
+            payload.ToolTipMode = MarkerTooltipMode.Always;
+            payload.ToolTipText = getDistance(new PointLatLng(payload.Position.Lat, payload.Position.Lng), new PointLatLng(sat.Position.Lat, sat.Position.Lng)).ToString("N2") + " m";
+            markers.Markers.Add(payload);
+            MAP.Overlays.Add(markers);
+        }
+        double getDistance(PointLatLng p1, PointLatLng p2)
+        {
+            var R = 6378137;
+            var dLat = rad(p2.Lat - p1.Lat);
+            var dLong = rad(p2.Lng - p1.Lng);
+            var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+              Math.Cos(rad(p1.Lat)) * Math.Cos(rad(p2.Lat)) *
+              Math.Sin(dLong / 2) * Math.Sin(dLong / 2);
+            var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+            var d = R * c;
+            return d;
+        }
+        double rad(double x)
+        {
+            return x * Math.PI / 180;
+        }
+        //grafiklerin ekran görüntüsünü alma
+        private void Chart_MouseClick(object sender, MouseEventArgs e)
+        {
+            System.Windows.Forms.DataVisualization.Charting.Chart chart = sender as System.Windows.Forms.DataVisualization.Charting.Chart;
+            if (chart != null)
+            {
+                int customWidth = 1920;  // Genişlik
+                int customHeight = 1080; // Yükseklik 
+                using (Bitmap bmp = new Bitmap(customWidth, customHeight))
+                {
+                    System.Drawing.Size originalSize = chart.Size;
+                    chart.Size = new System.Drawing.Size(customWidth, customHeight);
+                    chart.DrawToBitmap(bmp, new Rectangle(0, 0, customWidth, customHeight));
+                    chart.Size = originalSize;
+                    string directoryPath = @Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/grafikekrangörüntüleri";
+                    string filePath = Path.Combine(directoryPath, $"chart_screenshot_{DateTime.Now.ToString("yyyyMMdd_HHmmss")}.png");
+                    if (!System.IO.Directory.Exists(directoryPath))
+                        System.IO.Directory.CreateDirectory(directoryPath);
+                    bmp.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
+                    MessageBox.Show($"Ekran görüntüsü kaydedildi: {filePath}");
+                }
+            }
         }
         private void ListComPorts()//List All Com Ports To The ComboBoxes
         {
-            comboBox1.Items.Clear();
-            comboBox2.Items.Clear();
-            string[] ports = SerialPort.GetPortNames();
-            comboBox1.Items.AddRange(ports);
-            comboBox2.Items.AddRange(ports);
+            MainComboBox.Items.Clear();
+            HYIComboBox.Items.Clear();
+            PayloadComboBox.Items.Clear();
+            using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PnPEntity WHERE Caption like '%(COM%'"))
+            {
+                var portnames = SerialPort.GetPortNames();
+                var ports = searcher.Get().Cast<ManagementBaseObject>().ToList().Select(p => p["Caption"].ToString());
+
+                var portList = portnames.Select(n => n + " - " + ports.FirstOrDefault(s => s.Contains(n))).ToList();
+
+                foreach (string s in portList)
+                {
+                    MainComboBox.Items.Add(s);
+                    HYIComboBox.Items.Add(s);
+                    PayloadComboBox.Items.Add(s);
+                }
+            }
         }
         private void openButton_Click(object sender, EventArgs e)//Start Reading from Comport And Start Sending To The HYI
         {
             try
             {
-                HYI();
-                serialPort = new SerialPort(comboBox1.SelectedItem.ToString(), 9600, Parity.None, 8, StopBits.One);//Serial Port Settings
-                serialPort.DataReceived += SerialPort_DataReceived;
+
+                HYITimer.Enabled = true;
+                HYITimer.Start();
+                new Thread(new ThreadStart(Payload)).Start();
+                new Thread(new ThreadStart(Main)).Start();
+                new Thread(new ThreadStart(HYI)).Start();
+            }
+            catch (Exception ex) { Log(ex.ToString()); }
+
+        }
+        void Main()
+        {
+            try
+            {
+                serialPortMain = new SerialPort(MainComboBox.SelectedItem.ToString().Split('-')[0], mainBaudRate, Parity.None, 8, StopBits.One);//Serial Port Settings
+                serialPortMain.DataReceived += SerialPort_DataReceived;
                 paket = short.Parse(Sayac.Text);
                 timer2.Start();
-                if (!serialPort.IsOpen)
+                if (!serialPortMain.IsOpen)
                 {
-                    serialPort.PortName = comboBox1.SelectedItem.ToString();
-                    serialPort.BaudRate = 9600;
-                    serialPort.Parity = Parity.None;
-                    serialPort.DataBits = 8;
-                    serialPort.StopBits = StopBits.One;
-                    serialPort.Handshake = Handshake.None;
-                    try { serialPort.Open(); }
+                    serialPortMain.PortName = MainComboBox.SelectedItem.ToString().Split('-')[0];
+                    serialPortMain.BaudRate = mainBaudRate;
+                    serialPortMain.Parity = Parity.None;
+                    serialPortMain.DataBits = 8;
+                    serialPortMain.StopBits = StopBits.One;
+                    serialPortMain.Handshake = Handshake.None;
+                    try
+                    {
+                        serialPortMain.Open();
+                    }
                     catch (Exception ex) { Log(ex.ToString()); }
+
                 }
                 else
                     Log("Yavaş lan gaç tane basıyon");
             }
             catch (Exception ex) { Log(ex.ToString()); }
         }
-        private void DisplayReceivedData(string data)
+        void Payload()
+        {
+            try
+            {
+                serialPortPayload = new SerialPort(PayloadComboBox.SelectedItem.ToString().Split('-')[0], payloadBaudRate, Parity.None, 8, StopBits.One);//Serial Port Settings
+                serialPortPayload.DataReceived += SerialPortPayload_DataReceived1;
+                if (!serialPortPayload.IsOpen)
+                {
+                    serialPortPayload.PortName = PayloadComboBox.SelectedItem.ToString().Split('-')[0];
+                    serialPortPayload.BaudRate = payloadBaudRate;
+                    serialPortPayload.Parity = Parity.None;
+                    serialPortPayload.DataReceived += SerialPortPayload_DataReceived1;
+                    serialPortPayload.DataBits = 8;
+                    serialPortPayload.StopBits = StopBits.One;
+                    serialPortPayload.Handshake = Handshake.None;
+                    try
+                    {
+                        serialPortPayload.Open();
+                    }
+                    catch (Exception ex) { Log(ex.ToString()); }
+
+                }
+                else
+                    Log("Yavaş lan gaç tane basıyon");
+
+            }
+            catch (Exception ex) { Log(ex.ToString()); }
+        }
+
+        private void SerialPortPayload_DataReceived1(object sender, SerialDataReceivedEventArgs e)
+        {
+            SerialPort sp = (SerialPort)sender;
+            byte[] buffer = new byte[sp.BytesToRead];
+            sp.Read(buffer, 0, buffer.Length);
+            tempBufferPayload.AddRange(buffer);
+            int ffCount = 0;
+            int lastFFIndex = -1;
+            for (int i = 0; i < tempBufferPayload.Count; i++)
+            {
+                if (tempBufferPayload[i] == 0xFF)
+                {
+                    ffCount++;
+                    lastFFIndex = i;
+                    if (ffCount == 3)
+                    {
+                        byte[] beforeFFs = tempBufferPayload.Take(lastFFIndex - 2).ToArray();
+                        //foreach (byte b in beforeFFs) Log(b.ToString());
+                        DisplayReceivedData1(beforeFFs);
+                        tempBufferPayload.RemoveRange(0, lastFFIndex + 1);
+                        ffCount = 0; // Reset count for next frame
+                    }
+                }
+                else
+                    ffCount = 0;
+            }
+        }
+        private void DisplayReceivedData(byte[] t)
         {
             try
             {
                 if (InvokeRequired)
-                    BeginInvoke(new Action<string>(DisplayReceivedData), data);
+                    BeginInvoke(new Action<byte[]>(DisplayReceivedData), t);
                 else
-                {  
-                    if (richTextBox2.Text.Length >= 2000000)
-                        richTextBox2.Text = "";
+                {
+                    if (LogTextBox.Text.Length >= 2000000)
+                        LogTextBox.Text = "";
                     paket++;
-                    string[] veriler = data.Split(',');
-                    veriler[0] = veriler[0].Replace("*", "");
-                    veriler[20] = veriler[20].Replace("+", "");
-                    Sayac.Text = veriler[0];
-                    İrtifa.Text = veriler[1];
-                    RoketGPSirtifa.Text = veriler[2];
-                    roketBoylam.Text = veriler[3];
-                    roketEnlem.Text = veriler[4];
-                    GörevYüküGPSirtifa1.Text = veriler[5];
-                    GörevYüküEnlem.Text = veriler[6];
-                    GörevYüküBoylam.Text = veriler[7];
-                    JireskopX.Text = veriler[8];
-                    JireskopY.Text = veriler[9];
-                    JireskopZ.Text = veriler[10];
-                    ivmeX.Text = veriler[11];
-                    ivmeY.Text = veriler[12];
-                    ivmeZ.Text = veriler[13];
-                    Durum.Text = veriler[14];
-                    pilgerilim.Text = veriler[16];
-                    sicaklik.Text = veriler[17];
-                    hiz.Text = veriler[18];
-                    tarih.Text = veriler[19];
-                    saat.Text = veriler[20];
-                    yunuslamaacisi.Text = "23";
+                    teamID = t[0];
+                    string _Sayac = t[1].ToString();
+                    string _Irtifa = BitConverter.ToSingle(t, 2).ToString();
+                    string _RoketGPSirtifa = BitConverter.ToSingle(t, 6).ToString();
+                    string _RoketEnlem = BitConverter.ToSingle(t, 10).ToString();
+                    string _RoketBoylam = BitConverter.ToSingle(t, 14).ToString();
+                    string _JireskopX = BitConverter.ToSingle(t, 18).ToString();
+                    string _JireskopY = BitConverter.ToSingle(t, 22).ToString();
+                    string _JireskopZ = BitConverter.ToSingle(t, 26).ToString();
+                    string _IvmeX = BitConverter.ToSingle(t, 30).ToString();
+                    string _IvmeY = BitConverter.ToSingle(t, 34).ToString();
+                    string _IvmeZ = BitConverter.ToSingle(t, 38).ToString();
+                    string _yunuslamaacisi = BitConverter.ToSingle(t, 42).ToString();
+                    string _Durum = t[46].ToString();
+                    string _CRC = t[47].ToString();
+                    string _PilGerilim = BitConverter.ToSingle(t, 48).ToString();
+                    string _Sicaklik = BitConverter.ToSingle(t, 52).ToString();
+                    string _Hiz = BitConverter.ToSingle(t, 56).ToString();
+                    string _Basinc = BitConverter.ToSingle(t, 60).ToString();
+                    DateTime now = DateTime.Now;
+                    string _Tarih = now.ToString("yyyy-MM-dd");
+                    string _Saat = now.ToString("HH:mm:ss");
+                    Sayac.Text = _Sayac;
+                    Basinc.Text = _Basinc;
+                    İrtifa.Text = _Irtifa;
+                    RoketGPSirtifa.Text = _RoketGPSirtifa;
+                    roketBoylam.Text = _RoketBoylam;
+                    roketEnlem.Text = _RoketEnlem;
+                    JireskopX.Text = _JireskopX;
+                    JireskopY.Text = _JireskopY;
+                    JireskopZ.Text = _JireskopZ;
+                    ivmeX.Text = _IvmeX;
+                    ivmeY.Text = _IvmeY;
+                    ivmeZ.Text = _IvmeZ;
+                    Durum.Text = _Durum;
+                    CRC.Text = _CRC;
+                    pilgerilim.Text = _PilGerilim;
+                    sicaklik.Text = _Sicaklik;
+                    hiz.Text = _Hiz;
+                    tarih.Text = _Tarih;
+                    saat.Text = _Saat;
+                    yunuslamaacisi.Text = _yunuslamaacisi;
                     ID.Text = teamID.ToString();
-                    string _Sayac = veriler[0].Replace("*", "");
-                    string _İrtifa = veriler[1];
-                    string _RoketGPSirtifa = veriler[2];
-                    string _RoketBoylam = veriler[3];
-                    string _RoketEnlem = veriler[4];
-                    string _GörevYüküGPSirtifa1 = veriler[5];
-                    string _GörevYüküEnlem = veriler[6];
-                    string _GörevYüküBoylam = veriler[7];
-                    string _JireskopX = veriler[8];
-                    string _JireskopY = veriler[9];
-                    string _JireskopZ = veriler[10];
-                    string _IvmeX = veriler[11];
-                    string _IvmeY = veriler[12];
-                    string _IvmeZ = veriler[13];
-                    string _Durum = veriler[14];
-                    string _CRC = veriler[15];
-                    string _PilGerilim = veriler[16];
-                    string _Sicaklik = veriler[17];
-                    string _Hiz = veriler[18];
-                    string _Tarih = veriler[19];
-                    string _Saat = veriler[20];
-                    string _yunuslamaacisi = yunuslamaacisi.Text;
-                    byte[] package = new byte[78];
-                    package[0] = 0xFF;
-                    package[1] = 0xFF;
-                    package[2] = 0x54;
-                    package[3] = 0x52;
+                    for (int i = 0; i < HYIPackage.Length; i++)//Package'da boş değerleri yakalamak için unassigned value olarak FF atıyoruz
+                        HYIPackage[i] = 0xFF;
+                    //gride dataları ekle 
+                    HYIPackage[0] = 0xFF;
+                    HYIPackage[1] = 0xFF;
+                    HYIPackage[2] = 0x54;
+                    HYIPackage[3] = 0x52;
                     byte counter;
-                    package[4] = teamID; //teamID 
-                    package[5] = byte.TryParse(_Sayac, out counter) ? counter : (byte)0; //counter 
-                    package[6] = getBytes(float.Parse(_İrtifa))[0];
-                    package[7] = getBytes(float.Parse(_İrtifa))[1];
-                    package[8] = getBytes(float.Parse(_İrtifa))[2];
-                    package[9] = getBytes(float.Parse(_İrtifa))[3];
+                    HYIPackage[4] = teamID; //teamID 
+                    HYIPackage[5] = byte.TryParse(_Sayac, out counter) ? counter : (byte)0; //counter 
+                    HYIPackage[6] = getBytes(float.Parse(_Irtifa))[0];
+                    HYIPackage[7] = getBytes(float.Parse(_Irtifa))[1];
+                    HYIPackage[8] = getBytes(float.Parse(_Irtifa))[2];
+                    HYIPackage[9] = getBytes(float.Parse(_Irtifa))[3];
                     //gps altitude
-                    package[10] = getBytes(float.Parse(_RoketGPSirtifa))[0];
-                    package[11] = getBytes(float.Parse(_RoketGPSirtifa))[1];
-                    package[12] = getBytes(float.Parse(_RoketGPSirtifa))[2];
-                    package[13] = getBytes(float.Parse(_RoketGPSirtifa))[3];
+                    HYIPackage[10] = getBytes(float.Parse(_RoketGPSirtifa))[0];
+                    HYIPackage[11] = getBytes(float.Parse(_RoketGPSirtifa))[1];
+                    HYIPackage[12] = getBytes(float.Parse(_RoketGPSirtifa))[2];
+                    HYIPackage[13] = getBytes(float.Parse(_RoketGPSirtifa))[3];
                     //gps latitude
-                    package[14] = getBytes(float.Parse(_RoketEnlem))[0];
-                    package[15] = getBytes(float.Parse(_RoketEnlem))[1];
-                    package[16] = getBytes(float.Parse(_RoketEnlem))[2];
-                    package[17] = getBytes(float.Parse(_RoketEnlem))[3];
+                    HYIPackage[14] = getBytes(float.Parse(_RoketEnlem))[0];
+                    HYIPackage[15] = getBytes(float.Parse(_RoketEnlem))[1];
+                    HYIPackage[16] = getBytes(float.Parse(_RoketEnlem))[2];
+                    HYIPackage[17] = getBytes(float.Parse(_RoketEnlem))[3];
                     //gps longitude
-                    package[18] = getBytes(float.Parse(_RoketBoylam))[0];
-                    package[19] = getBytes(float.Parse(_RoketBoylam))[1];
-                    package[20] = getBytes(float.Parse(_RoketBoylam))[2];
-                    package[21] = getBytes(float.Parse(_RoketBoylam))[3];
-                    //payload gps altitude             
-                    package[22] = getBytes(float.Parse(_GörevYüküGPSirtifa1))[0];
-                    package[23] = getBytes(float.Parse(_GörevYüküGPSirtifa1))[1];
-                    package[24] = getBytes(float.Parse(_GörevYüküGPSirtifa1))[2];
-                    package[25] = getBytes(float.Parse(_GörevYüküGPSirtifa1))[3];
-                    //payload gps latitude             
-                    package[26] = getBytes(float.Parse(_GörevYüküEnlem))[0];
-                    package[27] = getBytes(float.Parse(_GörevYüküEnlem))[1];
-                    package[28] = getBytes(float.Parse(_GörevYüküEnlem))[2];
-                    package[29] = getBytes(float.Parse(_GörevYüküEnlem))[3];
-                    //payload gps longitude           
-                    package[30] = getBytes(float.Parse(_GörevYüküBoylam))[0];
-                    package[31] = getBytes(float.Parse(_GörevYüküBoylam))[1];
-                    package[32] = getBytes(float.Parse(_GörevYüküBoylam))[2];
-                    package[33] = getBytes(float.Parse(_GörevYüküBoylam))[3];
+                    HYIPackage[18] = getBytes(float.Parse(_RoketBoylam))[0];
+                    HYIPackage[19] = getBytes(float.Parse(_RoketBoylam))[1];
+                    HYIPackage[20] = getBytes(float.Parse(_RoketBoylam))[2];
+                    HYIPackage[21] = getBytes(float.Parse(_RoketBoylam))[3];
                     //kademe gps irtifa (bizde yok)
-                    package[34] = 0x00;
-                    package[35] = 0x00;
-                    package[36] = 0x00;
-                    package[37] = 0x00;
+                    HYIPackage[34] = 0x00;
+                    HYIPackage[35] = 0x00;
+                    HYIPackage[36] = 0x00;
+                    HYIPackage[37] = 0x00;
                     //kademe gps enlem (bizde yok)
-                    package[38] = 0x00;
-                    package[39] = 0x00;
-                    package[40] = 0x00;
-                    package[41] = 0x00;
+                    HYIPackage[38] = 0x00;
+                    HYIPackage[39] = 0x00;
+                    HYIPackage[40] = 0x00;
+                    HYIPackage[41] = 0x00;
                     //kademe gps boylam (bizde yok)
-                    package[42] = 0x00;
-                    package[43] = 0x00;
-                    package[44] = 0x00;
-                    package[45] = 0x00;
+                    HYIPackage[42] = 0x00;
+                    HYIPackage[43] = 0x00;
+                    HYIPackage[44] = 0x00;
+                    HYIPackage[45] = 0x00;
                     //gyroscope x
-                    package[46] = getBytes(float.Parse(_JireskopX))[0];
-                    package[47] = getBytes(float.Parse(_JireskopX))[1];
-                    package[48] = getBytes(float.Parse(_JireskopX))[2];
-                    package[49] = getBytes(float.Parse(_JireskopX))[3];
+                    HYIPackage[46] = getBytes(float.Parse(_JireskopX))[0];
+                    HYIPackage[47] = getBytes(float.Parse(_JireskopX))[1];
+                    HYIPackage[48] = getBytes(float.Parse(_JireskopX))[2];
+                    HYIPackage[49] = getBytes(float.Parse(_JireskopX))[3];
                     //gyroscope y                      
-                    package[50] = getBytes(float.Parse(_JireskopY))[0];
-                    package[51] = getBytes(float.Parse(_JireskopY))[1];
-                    package[52] = getBytes(float.Parse(_JireskopY))[2];
-                    package[53] = getBytes(float.Parse(_JireskopY))[3];
+                    HYIPackage[50] = getBytes(float.Parse(_JireskopY))[0];
+                    HYIPackage[51] = getBytes(float.Parse(_JireskopY))[1];
+                    HYIPackage[52] = getBytes(float.Parse(_JireskopY))[2];
+                    HYIPackage[53] = getBytes(float.Parse(_JireskopY))[3];
                     //gyroscope z                    
-                    package[54] = getBytes(float.Parse(_JireskopZ))[0];
-                    package[55] = getBytes(float.Parse(_JireskopZ))[1];
-                    package[56] = getBytes(float.Parse(_JireskopZ))[2];
-                    package[57] = getBytes(float.Parse(_JireskopZ))[3];
+                    HYIPackage[54] = getBytes(float.Parse(_JireskopZ))[0];
+                    HYIPackage[55] = getBytes(float.Parse(_JireskopZ))[1];
+                    HYIPackage[56] = getBytes(float.Parse(_JireskopZ))[2];
+                    HYIPackage[57] = getBytes(float.Parse(_JireskopZ))[3];
                     //acceleration x                  
-                    package[58] = getBytes(float.Parse(_IvmeX))[0];
-                    package[59] = getBytes(float.Parse(_IvmeX))[1];
-                    package[60] = getBytes(float.Parse(_IvmeX))[2];
-                    package[61] = getBytes(float.Parse(_IvmeX))[3];
+                    HYIPackage[58] = getBytes(float.Parse(_IvmeX))[0];
+                    HYIPackage[59] = getBytes(float.Parse(_IvmeX))[1];
+                    HYIPackage[60] = getBytes(float.Parse(_IvmeX))[2];
+                    HYIPackage[61] = getBytes(float.Parse(_IvmeX))[3];
                     //acceleration y                   
-                    package[62] = getBytes(float.Parse(_IvmeY))[0];
-                    package[63] = getBytes(float.Parse(_IvmeY))[1];
-                    package[64] = getBytes(float.Parse(_IvmeY))[2];
-                    package[65] = getBytes(float.Parse(_IvmeY))[3];
+                    HYIPackage[62] = getBytes(float.Parse(_IvmeY))[0];
+                    HYIPackage[63] = getBytes(float.Parse(_IvmeY))[1];
+                    HYIPackage[64] = getBytes(float.Parse(_IvmeY))[2];
+                    HYIPackage[65] = getBytes(float.Parse(_IvmeY))[3];
                     //acceleration z                  
-                    package[66] = getBytes(float.Parse(_IvmeZ))[0];
-                    package[67] = getBytes(float.Parse(_IvmeZ))[1];
-                    package[68] = getBytes(float.Parse(_IvmeZ))[2];
-                    package[69] = getBytes(float.Parse(_IvmeZ))[3];
+                    HYIPackage[66] = getBytes(float.Parse(_IvmeZ))[0];
+                    HYIPackage[67] = getBytes(float.Parse(_IvmeZ))[1];
+                    HYIPackage[68] = getBytes(float.Parse(_IvmeZ))[2];
+                    HYIPackage[69] = getBytes(float.Parse(_IvmeZ))[3];
                     //angle                            
-                    package[70] = getBytes(float.Parse(_yunuslamaacisi))[0];
-                    package[71] = getBytes(float.Parse(_yunuslamaacisi))[1];
-                    package[72] = getBytes(float.Parse(_yunuslamaacisi))[2];
-                    package[73] = getBytes(float.Parse(_yunuslamaacisi))[3];
+                    HYIPackage[70] = getBytes(float.Parse(_yunuslamaacisi))[0];
+                    HYIPackage[71] = getBytes(float.Parse(_yunuslamaacisi))[1];
+                    HYIPackage[72] = getBytes(float.Parse(_yunuslamaacisi))[2];
+                    HYIPackage[73] = getBytes(float.Parse(_yunuslamaacisi))[3];
                     //state                          
-                    package[74] = byte.TryParse(_Durum, out durum) ? durum : (byte)0;
-                    //crc
-                    package[75] = calculateCRC(package);
-                    CRC.Text = package[75].ToString();
-                    package[76] = 0x0D;
-                    package[77] = 0x0A;
-                    if (sendData)
-                        stream_sendDataToHYI.Write(package, 0, package.Length);
+                    HYIPackage[74] = byte.TryParse(_Durum, out durum) ? durum : (byte)0;
+
+                    HYIPackage[76] = 0x0D;
+                    HYIPackage[77] = 0x0A;
                     try
                     {
                         string aciX = JireskopX.Text;
@@ -383,35 +548,117 @@ namespace arayüz_örnek
                         catch (Exception ex) { Log(ex.ToString()); }
                     }
                     catch (Exception ex) { Log(ex.ToString()); }
-                    dataGridView1.Rows.Add(veriler);
-                    pressure_chart.Series["Pressure"].Points.AddXY(Sayac.Text, İrtifa.Text);
-                    pressure_chart.Series["P_Pressure"].Points.AddXY(Sayac.Text, GörevYüküGPSirtifa1.Text);
-                    velocity_Chart.Series["Velocity"].Points.AddXY(Sayac.Text, hiz.Text);
-                    altitude.Series["Altitude"].Points.AddXY(Sayac.Text, GörevYüküGPSirtifa1.Text);
-                    altitude.Series["P_Altitude"].Points.AddXY(Sayac.Text, İrtifa.Text);
-                    double lat = Convert.ToDouble(roketBoylam.Text.Replace('.', ','));
-                    double longt = Convert.ToDouble(roketEnlem.Text.Replace('.', ','));
-                    MAP.Position = new GMap.NET.PointLatLng(lat, longt);
-                    MAP.MinZoom = 15;
-                    MAP.MaxZoom = 15;
-                    MAP.Zoom = 15;
-                    chromiumWebBrowser1.EvaluateScriptAsync("delLastMark();");//GoogleMap(not GMap) Delete Marks
-                    chromiumWebBrowser1.EvaluateScriptAsync("setmark(" + roketBoylam.Text + "," + roketEnlem.Text + "," + GörevYüküEnlem.Text + "," + GörevYüküBoylam.Text + ");");//GoogleMap Add Marks
+                    pressure_chart.Series["Pressure"].Points.AddXY(tarih.Text + saat.Text, Basinc.Text);
+                    pressure_chart.Series["P_Pressure"].Points.AddXY(tarih.Text + saat.Text, P_Basinc.Text);
+                    velocity_Chart.Series["Velocity"].Points.AddXY(tarih.Text + saat.Text, hiz.Text);
+                    altitude.Series["Altitude"].Points.AddXY(tarih.Text + saat.Text, İrtifa.Text);
+                    altitude.Series["P_Altitude"].Points.AddXY(tarih.Text + saat.Text, P_Altitude.Text);
                     GC.Collect();
                 }
+
             }
             catch (Exception ex) { Log(ex.ToString()); }
         }
+        bool PackageCompleted(byte[] array)
+        {
+            if (HYIPackage[22] == 0xFF && HYIPackage[23] == 0xFF && HYIPackage[24] == 0xFF && HYIPackage[25] == 0xFF)
+                return false;
+            else
+                return true;
+        }
+        private void DisplayReceivedData1(byte[] t)
+        {
+            try
+            {
+                if (InvokeRequired)
+                    BeginInvoke(new Action<byte[]>(DisplayReceivedData1), t);
+                else
+                {
+                    string _GörevYüküGPSirtifa = BitConverter.ToSingle(t, 0).ToString();
+                    string _GörevYüküEnlem = BitConverter.ToSingle(t, 4).ToString();
+                    string _GörevYüküBoylam = BitConverter.ToSingle(t, 8).ToString();
+                    string _Sicaklik = BitConverter.ToSingle(t, 12).ToString();
+                    string _Basinc = BitConverter.ToSingle(t, 16).ToString();
+                    string _Nem = BitConverter.ToSingle(t, 20).ToString();
+                    string _İrtifa = BitConverter.ToSingle(t, 24).ToString();
+                    GörevYüküGPSirtifa1.Text = _GörevYüküGPSirtifa;
+                    GörevYüküEnlem.Text = _GörevYüküEnlem;
+                    GörevYüküBoylam.Text = _GörevYüküBoylam;
+                    P_Sicaklik.Text = _Sicaklik;
+                    P_Basinc.Text = _Basinc;
+                    Nem.Text = _Nem;
+                    P_Altitude.Text = _İrtifa;
+                    //payload gps altitude
+                    HYIPackage[22] = getBytes(float.Parse(_GörevYüküGPSirtifa))[0];
+                    HYIPackage[23] = getBytes(float.Parse(_GörevYüküGPSirtifa))[1];
+                    HYIPackage[24] = getBytes(float.Parse(_GörevYüküGPSirtifa))[2];
+                    HYIPackage[25] = getBytes(float.Parse(_GörevYüküGPSirtifa))[3];
+                    //payload gps latitude             
+                    HYIPackage[26] = getBytes(float.Parse(_GörevYüküEnlem))[0];
+                    HYIPackage[27] = getBytes(float.Parse(_GörevYüküEnlem))[1];
+                    HYIPackage[28] = getBytes(float.Parse(_GörevYüküEnlem))[2];
+                    HYIPackage[29] = getBytes(float.Parse(_GörevYüküEnlem))[3];
+                    //payload gps longitude           
+                    HYIPackage[30] = getBytes(float.Parse(_GörevYüküBoylam))[0];
+                    HYIPackage[31] = getBytes(float.Parse(_GörevYüküBoylam))[1];
+                    HYIPackage[32] = getBytes(float.Parse(_GörevYüküBoylam))[2];
+                    HYIPackage[33] = getBytes(float.Parse(_GörevYüküBoylam))[3];
+                    string[] row = new string[]
+                    {
+                        Sayac.Text,
+                        İrtifa.Text,
+                        RoketGPSirtifa.Text,
+                        roketBoylam.Text,
+                        roketEnlem.Text,
+                        GörevYüküGPSirtifa1.Text,
+                        GörevYüküEnlem.Text,
+                        GörevYüküBoylam.Text,
+                        JireskopX.Text,
+                        JireskopY.Text,
+                        JireskopZ.Text,
+                        ivmeX.Text,
+                        ivmeY.Text,
+                        ivmeZ.Text,
+                        Durum.Text,
+                        CRC.Text,
+                        pilgerilim.Text,
+                        sicaklik.Text,
+                        hiz.Text,
+                        tarih.Text,
+                        saat.Text,
+                        yunuslamaacisi.Text,
+                        P_Sicaklik.Text,
+                        P_Altitude.Text,
+                        P_Basinc.Text,
+                        Nem.Text
+                    };
+                    dataGridView1.Rows.Add(row);
+                    chromiumWebBrowser1.EvaluateScriptAsync("delLastMark();");//GoogleMap(not GMap) Delete Marks
+                    chromiumWebBrowser1.EvaluateScriptAsync("setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");");//GoogleMap Add Marks
+                    double lat = Convert.ToDouble(roketBoylam.Text.Replace('.', ','));
+                    double longt = Convert.ToDouble(roketEnlem.Text.Replace('.', ','));
+                    double _lat = Convert.ToDouble(GörevYüküEnlem.Text.Replace('.', ','));
+                    double _longt = Convert.ToDouble(GörevYüküBoylam.Text.Replace('.', ','));
+                    UpdateGMap(roketEnlem.Text.Replace(".", ","), roketBoylam.Text.Replace(".", ","), GörevYüküEnlem.Text.Replace(".", ","), GörevYüküBoylam.Text.Replace(".", ","));
+
+                    label23.Text = "setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");";
+                }
+            }
+            catch (Exception ex)
+            {
+                Log(ex.ToString());
+            }
+        }
         void Log(string log)
         {
-            richTextBox1.Text += "Log:" + log + Environment.NewLine;
+            HataTextBox.Text += "Log:" + log + Environment.NewLine;
         }
         public void openPortToSendData(string port)
         {
             try
             {
                 stream_sendDataToHYI.PortName = port;
-                stream_sendDataToHYI.BaudRate = 19200;
+                stream_sendDataToHYI.BaudRate = HYIBaudRate;
                 stream_sendDataToHYI.Parity = Parity.None;
                 stream_sendDataToHYI.DataBits = 8;
                 stream_sendDataToHYI.StopBits = StopBits.One;
@@ -427,7 +674,7 @@ namespace arayüz_örnek
             return Convert.ToByte(check_sum % 256);
         }
         private byte[] getBytes(float value)
-        {
+        {//byte donuştur
             var buffer = BitConverter.GetBytes(value);
             //if (!BitConverter.IsLittleEndian) 
             //    return buffer;
@@ -435,38 +682,48 @@ namespace arayüz_örnek
         }
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
-            int index = a.IndexOf("*");
-            if (index >= 0)
-                a = a.Substring(index); // 0. indekse kadar olan verileri siliyoruz. 
-            a += serialPort.ReadExisting();
-            if (a.Contains("*"))
+            SerialPort sp = (SerialPort)sender;
+            byte[] buffer = new byte[sp.BytesToRead];
+            sp.Read(buffer, 0, buffer.Length);
+            tempBuffer.AddRange(buffer);
+            int ffCount = 0;
+            int lastFFIndex = -1;
+            for (int i = 0; i < tempBuffer.Count; i++)
             {
-                if (a.Contains("+"))
+                if (tempBuffer[i] == 0xFF)
                 {
-                    DisplayReceivedData(a);
-                    a = "";
+                    ffCount++;
+                    lastFFIndex = i;
+                    if (ffCount == 3)
+                    {
+                        byte[] beforeFFs = tempBuffer.Take(lastFFIndex - 2).ToArray();
+                        DisplayReceivedData(beforeFFs);
+                        tempBuffer.RemoveRange(0, lastFFIndex + 1);
+                        ffCount = 0; // Reset count for next frame
+                    }
                 }
-                else if (a.Length > 120)
-                    a = "";
+                else
+                    ffCount = 0;
             }
-            else if (a.Contains("+") && !a.Contains("*"))
-                a = "";
         }
         private void closeButton_Click(object sender, EventArgs e)
         {
+            try
+            {
+                serialPortMain.Close();
+                serialPortPayload.Close();
+                serialPortHYI.Close();
+                HYITimer.Stop();
+                CSVOut();
+            }
+            catch (Exception ex) { Log(ex.ToString()); }
             timer2.Stop();
             try
             {
                 closePort_sendData();
-                button1.PerformClick();
             }
             catch (Exception ex) { Log(ex.ToString()); }
-            try
-            {
-                serialPort.Close();
-                CSVOut();
-            }
-            catch (Exception ex) { Log(ex.ToString()); }
+
         }
         private void dataGridView1_CellContentClick(object sender, DataGridViewCellEventArgs e)
         {
@@ -494,6 +751,11 @@ namespace arayüz_örnek
                 dataGridView1.Columns[18].Name = "Hız";
                 dataGridView1.Columns[19].Name = "Tarih";
                 dataGridView1.Columns[20].Name = "Saat";
+                dataGridView1.Columns[21].Name = "Yunuslama Açısı";
+                dataGridView1.Columns[22].Name = "Payload Sicaklik";
+                dataGridView1.Columns[23].Name = "Payload İrtifa";
+                dataGridView1.Columns[24].Name = "Basinc";
+                dataGridView1.Columns[25].Name = "Nem";
             }
             catch (Exception ex) { Log(ex.ToString()); }
         }
@@ -557,7 +819,7 @@ namespace arayüz_örnek
             catch (Exception ex) { Log(ex.ToString()); }
         }
         private void CSVOut()//CSV Output To The Desktop
-        {//buraya bak
+        {
             try
             {
                 using (StreamWriter sw = new StreamWriter(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/data.csv"))
@@ -587,17 +849,14 @@ namespace arayüz_örnek
             }
             catch (Exception ex) { Log(ex.ToString()); }
         }
-        private void timer2_Tick(object sender, EventArgs e)//Serial Monitor Timer And Always Scrol Down
+        private void timer2_Tick(object sender, EventArgs e)//Serial Monitor Timer, Always Scrol Down Log TextBox and DataGridView
         {
             try
             {
-                richTextBox1.SelectionStart = richTextBox1.Text.Length;
-                richTextBox2.SelectionStart = richTextBox2.Text.Length;
-                richTextBox1.ScrollToCaret();
-                richTextBox2.ScrollToCaret();
-                dataGridView1.Rows.Add(a);
-                //Datagridview'ı aşağı kaydıran komutu
-                if (serialPort.IsOpen) richTextBox2.Text += "Data:" + a + Environment.NewLine;
+                HataTextBox.SelectionStart = HataTextBox.Text.Length;
+                LogTextBox.SelectionStart = LogTextBox.Text.Length;
+                HataTextBox.ScrollToCaret();
+                LogTextBox.ScrollToCaret();
                 dataGridView1.FirstDisplayedScrollingRowIndex = dataGridView1.Rows.Count - 1;
             }
             catch (Exception ex) { Log(ex.ToString()); }
@@ -614,9 +873,9 @@ namespace arayüz_örnek
         {
             try
             {
-                sendData = true;
                 Log("HYI");
-                openPortToSendData(comboBox2.SelectedItem.ToString());
+                openPortToSendData(HYIComboBox.SelectedItem.ToString().Split('-')[0]);
+                sendData = true;
             }
             catch (Exception ex)
             {
@@ -641,16 +900,16 @@ namespace arayüz_örnek
         }
         private void button3_Click(object sender, EventArgs e)//Switch Button
         {
-            if (!richTextBox1.Visible)
+            if (!HataTextBox.Visible)
             {
                 dataGridView1.Visible = false;
-                richTextBox1.Visible = true;
-                richTextBox2.Visible = true;
+                HataTextBox.Visible = true;
+                LogTextBox.Visible = true;
             }
             else
             {
-                richTextBox1.Visible = false;
-                richTextBox2.Visible = false;
+                HataTextBox.Visible = false;
+                LogTextBox.Visible = false;
                 dataGridView1.Visible = true;
             }
         }
@@ -658,8 +917,21 @@ namespace arayüz_örnek
         {
             PAKET.Text = paket.ToString();
             paket = 0;
-        } 
-        private void button4_Click(object sender, EventArgs e)//Refresh Com Ports Button
+        }
+
+        private void HYITimer_Tick(object sender, EventArgs e)
+        {
+            Log("HYITimer_Tick");
+            if (sendData && PackageCompleted(HYIPackage))
+            {
+                //crc
+                HYIPackage[75] = calculateCRC(HYIPackage);
+                stream_sendDataToHYI.Write(HYIPackage, 0, HYIPackage.Length);
+                Log("HYI'ya Package Gönderildi: " + PackageCompleted(HYIPackage).ToString());
+            }
+        }
+
+        private void RefreshButton_Click(object sender, EventArgs e)//Refresh Com Ports Button
         {
             try
             {
