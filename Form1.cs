@@ -18,23 +18,25 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using DocumentFormat.OpenXml.Spreadsheet;
+using System.Data.Entity.Core.Common.CommandTrees.ExpressionBuilder;
 namespace arayüz_örnek
 {
     public partial class Form1 : Form
     {
         //Global Variables For General Purpose 
-        private float groundStationLat = 40.74208412258973f;
-        private float groundStationLng = 29.942214732057536f;
-        private float vinsanLat = 40.7431761f;
-        private float vinsanLng = 29.9412449f;
+        private float groundStationLat = 38.398358f;//Atış Alanı için
+        private float groundStationLng = 33.71108f;//Atış Alanı için
+        private float vinsanLat = 40.7431761f;//Vinsan Testi için
+        private float vinsanLng = 29.9412449f;//Vinsan Testi için
         internal readonly GMapOverlay objects = new GMapOverlay("objects");
         GMapOverlay markers = new GMapOverlay("markers");
         GMapMarker sat;
         GMapMarker station = new GMarkerGoogle(
-             new PointLatLng(40.7431761, 29.9412449),//Aksaray Hisar Atış Alanı Koordinatları
+             new PointLatLng(38.398358, 33.711087),//Aksaray Hisar Atış Alanı Koordinatları
              GMarkerGoogleType.red_dot);
         GMapOverlay polyOverlay = new GMapOverlay("polygons");
-        private bool vinsan = true;
+        private bool vinsan = false;
         private bool sendData = false;
         private SerialPort serialPortMain;
         private SerialPort serialPortPayload;
@@ -117,58 +119,78 @@ namespace arayüz_örnek
             foreach (var process in Process.GetProcessesByName(app))
                 process.Kill();
         }
+        public (float, float, float) QuaternionToEulerAngles(float w, float x, float y, float z)
+        {
+            // Quaternion'dan Euler açılarını hesaplayan fonksiyon  
+
+            float sinr_cosp = 2 * (w * x + y * z);
+            float cosr_cosp = 1 - 2 * (x * x + y * y);
+            float roll = (float)Math.Atan2(sinr_cosp, cosr_cosp);
+
+            float sinp = 2 * (w * y - z * x);
+            float pitch;
+            if (Math.Abs(sinp) >= 1)
+                pitch = (float)(Math.Sign(sinp) * (Math.PI / 2)); // pitch = 90 veya -90 derece  
+            else
+                pitch = (float)Math.Asin(sinp);
+
+            float siny_cosp = 2 * (w * z + x * y);
+            float cosy_cosp = 1 - 2 * (y * y + z * z);
+            float yaw = (float)Math.Atan2(siny_cosp, cosy_cosp);
+
+            // Dönüşleri dereceye çevir  
+            return (roll * (180f / (float)Math.PI), pitch * (180f / (float)Math.PI), yaw * (180f / (float)Math.PI));
+        }
         private void Form1_Load(object sender, EventArgs e)
         {
             try//Trying to kill old Unity Simulations and Timer2 tries to put new Unity App into UI
             {
                 timer2.Start();
                 timer4.Start();
-                Kill("3DSim");
-            }
-            catch (Exception ex) { Log(ex.ToString()); }
-            try//Unity Simulation App Starts And Putting into panel_unity on UI
-            {
-                string _3DSimExePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"\roketunity\3DSim_New\3DSim";
-                ProcessStartInfo startInfo = new ProcessStartInfo();
-                startInfo.FileName = _3DSimExePath;
-                startInfo.WindowStyle = ProcessWindowStyle.Maximized;
-                simApplication = Process.Start(startInfo);
-                simApplication.WaitForInputIdle();
-                MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
-                SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
-                MakeExternalWindowBorderless(simApplication.MainWindowHandle);
+                Kill("3D Sim");
             }
             catch (Exception ex) { Log(ex.ToString()); }
             //DataGridView Columns Name Setting Up
-            dataGridView1.ColumnCount = 21;
-            dataGridView1.Columns[0].Name = "Sayac";
-            dataGridView1.Columns[1].Name = "İrtifa";
-            dataGridView1.Columns[2].Name = "Roket GPS irtifa";
-            dataGridView1.Columns[3].Name = "Roket Boylam";
-            dataGridView1.Columns[4].Name = "Roket Enlem";
-            dataGridView1.Columns[5].Name = "Görev Yükü GPS irtifa";
-            dataGridView1.Columns[6].Name = "Görev Yükü Enlem";
-            dataGridView1.Columns[7].Name = "Görev Yükü Boylam ";
-            dataGridView1.Columns[8].Name = "JireskopX";
-            dataGridView1.Columns[9].Name = "JireskopY";
-            dataGridView1.Columns[10].Name = "JireskopZ";
-            dataGridView1.Columns[11].Name = "ivmeX";
-            dataGridView1.Columns[12].Name = "ivmeY";
-            dataGridView1.Columns[13].Name = "ivmeZ";
-            dataGridView1.Columns[14].Name = "Durum";
-            dataGridView1.Columns[15].Name = "CRC";
-            dataGridView1.Columns[16].Name = "Pil Gerilim";
-            dataGridView1.Columns[17].Name = "Sıcaklık";
-            dataGridView1.Columns[18].Name = "Hız";
-            dataGridView1.Columns[19].Name = "Tarih";
-            dataGridView1.Columns[20].Name = "Saat";
+            try
+            {
+                dataGridView1.ColumnCount = 28;
+                dataGridView1.Columns[0].Name = "Sayac";
+                dataGridView1.Columns[1].Name = "İrtifa";
+                dataGridView1.Columns[2].Name = "Roket GPS irtifa";
+                dataGridView1.Columns[3].Name = "Roket Boylam";
+                dataGridView1.Columns[4].Name = "Roket Enlem";
+                dataGridView1.Columns[5].Name = "Görev Yükü GPS irtifa";
+                dataGridView1.Columns[6].Name = "Görev Yükü Enlem";
+                dataGridView1.Columns[7].Name = "Görev Yükü Boylam ";
+                dataGridView1.Columns[8].Name = "JireskopX";
+                dataGridView1.Columns[9].Name = "JireskopY";
+                dataGridView1.Columns[10].Name = "JireskopZ";
+                dataGridView1.Columns[11].Name = "ivmeX";
+                dataGridView1.Columns[12].Name = "ivmeY";
+                dataGridView1.Columns[13].Name = "ivmeZ";
+                dataGridView1.Columns[14].Name = "Durum";
+                dataGridView1.Columns[15].Name = "CRC";
+                dataGridView1.Columns[16].Name = "Pil Gerilim";
+                dataGridView1.Columns[17].Name = "Sıcaklık";
+                dataGridView1.Columns[18].Name = "Hız";
+                dataGridView1.Columns[19].Name = "Tarih";
+                dataGridView1.Columns[20].Name = "Saat";
+                dataGridView1.Columns[21].Name = "Payload Sicaklik";
+                dataGridView1.Columns[22].Name = "Payload İrtifa";
+                dataGridView1.Columns[23].Name = "Basinc";
+                dataGridView1.Columns[24].Name = "Nem";
+                dataGridView1.Columns[25].Name = "Açı X";
+                dataGridView1.Columns[26].Name = "Açı Y";
+                dataGridView1.Columns[27].Name = "Açı Z";
+            }
+            catch (Exception ex) { Log(ex.ToString()); }
             //DataGridView Columns Name Setting Up
             ListComPorts();
             //Running up GMap with Cache for Offline use
             if (File.Exists(@Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/Cache"))
-                MAP.CacheLocation = @Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/Cache"; 
+                MAP.CacheLocation = @Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"/Cache";
             GMaps.Instance.Mode = AccessMode.ServerAndCache;
-            MAP.MapProvider = GoogleMapProvider.Instance; 
+            MAP.MapProvider = GoogleSatelliteMapProvider.Instance;
             MAP.Position = new PointLatLng(station.Position.Lat, station.Position.Lng);//Aksaray Hisar Atış Alanı Koordinatları
             MAP.MinZoom = 3;
             MAP.MaxZoom = 20;
@@ -183,7 +205,6 @@ namespace arayüz_örnek
             pressure_chart.MouseClick += new MouseEventHandler(Chart_MouseClick);
             velocity_Chart.MouseClick += new MouseEventHandler(Chart_MouseClick);
             altitude.MouseClick += new MouseEventHandler(Chart_MouseClick);
-
         }
         void AddSatPointToGMAP(double lat, double lng)
         {
@@ -211,24 +232,8 @@ namespace arayüz_örnek
             points.Add(new PointLatLng(_double(lat2), _double(lng2)));
             points.Add(new PointLatLng(station.Position.Lat, station.Position.Lng));
             GMapPolygon polygon = new GMapPolygon(points, "mypolygon");
-            polygon.Stroke = new Pen(Color.Red, 3);
-            polygon.Fill = new SolidBrush(Color.Transparent);
-            polyOverlay.Polygons.Add(polygon);
-            MAP.Overlays.Add(polyOverlay);
-            MAP.Refresh();
-        }
-        void UpdateGMap(string lat1, string lng1)
-        {
-            polyOverlay.Polygons.Clear();
-            markers.Markers.Clear();
-            markers.Markers.Add(station);
-            AddSatPointToGMAP(_double(lat1), _double(lng1));
-            List<PointLatLng> points = new List<PointLatLng>();
-            points.Add(new PointLatLng(_double(lat1), _double(lng1)));
-            points.Add(new PointLatLng(station.Position.Lat, station.Position.Lng));
-            GMapPolygon polygon = new GMapPolygon(points, "mypolygon");
-            polygon.Stroke = new Pen(Color.Red, 3);
-            polygon.Fill = new SolidBrush(Color.Transparent);
+            polygon.Stroke = new Pen(System.Drawing.Color.Red, 3);
+            polygon.Fill = new SolidBrush(System.Drawing.Color.Transparent);
             polyOverlay.Polygons.Add(polygon);
             MAP.Overlays.Add(polyOverlay);
             MAP.Refresh();
@@ -243,6 +248,7 @@ namespace arayüz_örnek
             markers.Markers.Add(payload);
             MAP.Overlays.Add(markers);
         }
+        //iki mesafe arası uzaklık
         double getDistance(PointLatLng p1, PointLatLng p2)
         {
             var R = 6378137;
@@ -306,12 +312,14 @@ namespace arayüz_örnek
         {
             try
             {
-
                 HYITimer.Enabled = true;
                 HYITimer.Start();
                 new Thread(new ThreadStart(Payload)).Start();
                 new Thread(new ThreadStart(Main)).Start();
                 new Thread(new ThreadStart(HYI)).Start();
+                unitywindowtime = -1;
+                timer1.Enabled = true;
+                timer1.Start();
             }
             catch (Exception ex) { Log(ex.ToString()); }
 
@@ -400,6 +408,7 @@ namespace arayüz_örnek
                     ffCount = 0;
             }
         }
+        int xyz = 1;
         private void DisplayReceivedData(byte[] t)
         {
             try
@@ -411,7 +420,7 @@ namespace arayüz_örnek
                     if (LogTextBox.Text.Length >= 2000000)
                         LogTextBox.Text = "";
                     paket++;
-                    teamID = t[0];
+                    //teamID = t[0];// Karttan gelirse burayı aç, burdan gelmesini istiyorsan burayı kapat
                     string _Sayac = t[1].ToString();
                     string _Irtifa = BitConverter.ToSingle(t, 2).ToString();
                     string _RoketGPSirtifa = BitConverter.ToSingle(t, 6).ToString();
@@ -423,13 +432,16 @@ namespace arayüz_örnek
                     string _IvmeX = BitConverter.ToSingle(t, 30).ToString();
                     string _IvmeY = BitConverter.ToSingle(t, 34).ToString();
                     string _IvmeZ = BitConverter.ToSingle(t, 38).ToString();
-                    string _yunuslamaacisi = BitConverter.ToSingle(t, 42).ToString();
+                    string _AciY = BitConverter.ToSingle(t, 42).ToString();
                     string _Durum = t[46].ToString();
                     string _CRC = t[47].ToString();
                     string _PilGerilim = BitConverter.ToSingle(t, 48).ToString();
                     string _Sicaklik = BitConverter.ToSingle(t, 52).ToString();
                     string _Hiz = BitConverter.ToSingle(t, 56).ToString();
                     string _Basinc = BitConverter.ToSingle(t, 60).ToString();
+                    string _AciX = BitConverter.ToSingle(t, 64).ToString();
+                    string _AciZ = BitConverter.ToSingle(t, 68).ToString();
+                    string _AciW = BitConverter.ToSingle(t, 72).ToString();
                     DateTime now = DateTime.Now;
                     string _Tarih = now.ToString("yyyy-MM-dd");
                     string _Saat = now.ToString("HH:mm:ss");
@@ -442,6 +454,8 @@ namespace arayüz_örnek
                     JireskopX.Text = _JireskopX;
                     JireskopY.Text = _JireskopY;
                     JireskopZ.Text = _JireskopZ;
+                    AciZ.Text = _AciZ;
+                    AciX.Text = _AciX;
                     ivmeX.Text = _IvmeX;
                     ivmeY.Text = _IvmeY;
                     ivmeZ.Text = _IvmeZ;
@@ -452,7 +466,8 @@ namespace arayüz_örnek
                     hiz.Text = _Hiz;
                     tarih.Text = _Tarih;
                     saat.Text = _Saat;
-                    yunuslamaacisi.Text = _yunuslamaacisi;
+                    AciY.Text = _AciY;
+                    AciW.Text = _AciW;
                     ID.Text = teamID.ToString();
                     for (int i = 0; i < HYIPackage.Length; i++)//Package'da boş değerleri yakalamak için unassigned value olarak FF atıyoruz
                         HYIPackage[i] = 0xFF;
@@ -529,23 +544,64 @@ namespace arayüz_örnek
                     HYIPackage[68] = getBytes(float.Parse(_IvmeZ))[2];
                     HYIPackage[69] = getBytes(float.Parse(_IvmeZ))[3];
                     //angle                            
-                    HYIPackage[70] = getBytes(float.Parse(_yunuslamaacisi))[0];
-                    HYIPackage[71] = getBytes(float.Parse(_yunuslamaacisi))[1];
-                    HYIPackage[72] = getBytes(float.Parse(_yunuslamaacisi))[2];
-                    HYIPackage[73] = getBytes(float.Parse(_yunuslamaacisi))[3];
+                    HYIPackage[70] = getBytes(float.Parse(_AciY))[0];
+                    HYIPackage[71] = getBytes(float.Parse(_AciY))[1];
+                    HYIPackage[72] = getBytes(float.Parse(_AciY))[2];
+                    HYIPackage[73] = getBytes(float.Parse(_AciY))[3];
                     //state                          
                     HYIPackage[74] = byte.TryParse(_Durum, out durum) ? durum : (byte)0;
-
                     HYIPackage[76] = 0x0D;
                     HYIPackage[77] = 0x0A;
                     try
                     {
-                        string aciX = JireskopX.Text;
-                        string aciY = JireskopY.Text;
-                        string aciZ = JireskopZ.Text;
-                        string aci = aciX + "," + aciY + "," + aciZ;
-                        try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
-                        catch (Exception ex) { Log(ex.ToString()); }
+                        string aciX = AciX.Text.Replace(".", ",");
+                        string aciY = AciY.Text.Replace(".", ",");
+                        string aciZ = AciZ.Text.Replace(".", ",");
+                        string aciW = AciW.Text.Replace(".", ",");
+                        //var eulerAngles = QuaternionToEulerAngles(float.Parse(aciW), float.Parse(aciX), float.Parse(aciY), float.Parse(aciZ));
+                        //string aci = (eulerAngles.Item3 * -1).ToString().Replace(",",".") + "," + (eulerAngles.Item2 * -1).ToString().Replace(",", ".") + "," + (eulerAngles.Item1 * -1).ToString().Replace(",", ".");
+                        string aci = "";
+                        //unitydeki roketın x y z sini döndürüyor
+                        switch (xyz)
+                        {
+                            case 1:
+                                aci = aciX + "*" + aciY + "*" + aciZ + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            case 2:
+                                aci = aciX + "*" + aciZ + "*" + aciY + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            case 3:
+                                aci = aciY + "*" + aciX + "*" + aciZ + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            case 4:
+                                aci = aciY + "*" + aciZ + "*" + aciX + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            case 5:
+                                aci = aciZ + "*" + aciX + "*" + aciY + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            case 6:
+                                aci = aciZ + "*" + aciY + "*" + aciX + "*" + aciW;
+                                try { new UdpClient().Send(Encoding.ASCII.GetBytes(aci), Encoding.ASCII.GetBytes(aci).Length, "127.0.0.1", 11000); }//Sending 3D Angle Datas to Unity Simulation
+                                catch (Exception ex) { Log(ex.ToString()); }
+                                break;
+                            default:
+                                xyz = 1;
+                                break;
+                        }
+                        Log(aci);
+                        label23.Visible = true;
+                        //label23.Text = aci;
+                        
                     }
                     catch (Exception ex) { Log(ex.ToString()); }
                     pressure_chart.Series["Pressure"].Points.AddXY(tarih.Text + saat.Text, Basinc.Text);
@@ -554,6 +610,49 @@ namespace arayüz_örnek
                     altitude.Series["Altitude"].Points.AddXY(tarih.Text + saat.Text, İrtifa.Text);
                     altitude.Series["P_Altitude"].Points.AddXY(tarih.Text + saat.Text, P_Altitude.Text);
                     GC.Collect();
+                    if (PayloadComboBox.SelectedIndex == -1)
+                    {
+                        string[] row = new string[]
+                        {
+                            Sayac.Text,
+                            İrtifa.Text,
+                            RoketGPSirtifa.Text,
+                            roketBoylam.Text,
+                            roketEnlem.Text,
+                            GörevYüküGPSirtifa1.Text,
+                            GörevYüküEnlem.Text,
+                            GörevYüküBoylam.Text,
+                            JireskopX.Text,
+                            JireskopY.Text,
+                            JireskopZ.Text,
+                            ivmeX.Text,
+                            ivmeY.Text,
+                            ivmeZ.Text,
+                            Durum.Text,
+                            CRC.Text,
+                            pilgerilim.Text,
+                            sicaklik.Text,
+                            hiz.Text,
+                            tarih.Text,
+                            saat.Text,
+                            P_Sicaklik.Text,
+                            P_Altitude.Text,
+                            P_Basinc.Text,
+                            Nem.Text,
+                            AciX.Text,
+                            AciY.Text,
+                            AciZ.Text
+                        };
+                        dataGridView1.Rows.Add(row);
+                        chromiumWebBrowser1.EvaluateScriptAsync("delLastMark();");//GoogleMap(not GMap) Delete Marks
+                        chromiumWebBrowser1.EvaluateScriptAsync("setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");");//GoogleMap Add Marks
+                        double lat = _double(roketBoylam.Text.Replace('.', ','));
+                        double longt = _double(roketEnlem.Text.Replace('.', ','));
+                        double _lat = _double(GörevYüküEnlem.Text.Replace('.', ','));
+                        double _longt = _double(GörevYüküBoylam.Text.Replace('.', ','));
+                        UpdateGMap(roketEnlem.Text.Replace(".", ","), roketBoylam.Text.Replace(".", ","), GörevYüküEnlem.Text.Replace(".", ","), GörevYüküBoylam.Text.Replace(".", ","));
+                        label23.Text = "setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");";
+                    }
                 }
 
             }
@@ -626,28 +725,26 @@ namespace arayüz_örnek
                         hiz.Text,
                         tarih.Text,
                         saat.Text,
-                        yunuslamaacisi.Text,
                         P_Sicaklik.Text,
                         P_Altitude.Text,
                         P_Basinc.Text,
-                        Nem.Text
+                        Nem.Text,
+                        AciX.Text,
+                        AciY.Text,
+                        AciZ.Text
                     };
                     dataGridView1.Rows.Add(row);
                     chromiumWebBrowser1.EvaluateScriptAsync("delLastMark();");//GoogleMap(not GMap) Delete Marks
                     chromiumWebBrowser1.EvaluateScriptAsync("setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");");//GoogleMap Add Marks
-                    double lat = Convert.ToDouble(roketBoylam.Text.Replace('.', ','));
-                    double longt = Convert.ToDouble(roketEnlem.Text.Replace('.', ','));
-                    double _lat = Convert.ToDouble(GörevYüküEnlem.Text.Replace('.', ','));
-                    double _longt = Convert.ToDouble(GörevYüküBoylam.Text.Replace('.', ','));
+                    double lat = _double(roketBoylam.Text.Replace('.', ','));
+                    double longt = _double(roketEnlem.Text.Replace('.', ','));
+                    double _lat = _double(GörevYüküEnlem.Text.Replace('.', ','));
+                    double _longt = _double(GörevYüküBoylam.Text.Replace('.', ','));
                     UpdateGMap(roketEnlem.Text.Replace(".", ","), roketBoylam.Text.Replace(".", ","), GörevYüküEnlem.Text.Replace(".", ","), GörevYüküBoylam.Text.Replace(".", ","));
-
-                    label23.Text = "setmark(" + roketEnlem.Text.Replace(",", ".") + "," + roketBoylam.Text.Replace(",", ".") + "," + GörevYüküEnlem.Text.Replace(",", ".") + "," + GörevYüküBoylam.Text.Replace(",", ".") + ");";
                 }
             }
             catch (Exception ex)
-            {
-                Log(ex.ToString());
-            }
+            { Log(ex.ToString()); }
         }
         void Log(string log)
         {
@@ -674,7 +771,7 @@ namespace arayüz_örnek
             return Convert.ToByte(check_sum % 256);
         }
         private byte[] getBytes(float value)
-        {//byte donuştur
+        {
             var buffer = BitConverter.GetBytes(value);
             //if (!BitConverter.IsLittleEndian) 
             //    return buffer;
@@ -723,41 +820,6 @@ namespace arayüz_örnek
                 closePort_sendData();
             }
             catch (Exception ex) { Log(ex.ToString()); }
-
-        }
-        private void dataGridView1_CellContentClick(object sender, DataGridViewCellEventArgs e)
-        {
-            try
-            {
-                dataGridView1.ColumnCount = 21;
-                dataGridView1.Columns[0].Name = "Sayac";
-                dataGridView1.Columns[1].Name = "İrtifa";
-                dataGridView1.Columns[2].Name = "Roket GPS irtifa";
-                dataGridView1.Columns[3].Name = "Roket Boylam";
-                dataGridView1.Columns[4].Name = "Roket Enlem";
-                dataGridView1.Columns[5].Name = "Görev Yükü GPS irtifa";
-                dataGridView1.Columns[6].Name = "Görev Yükü Enlem";
-                dataGridView1.Columns[7].Name = "Görev Yükü Boylam ";
-                dataGridView1.Columns[8].Name = "JireskopX";
-                dataGridView1.Columns[9].Name = "JireskopY";
-                dataGridView1.Columns[10].Name = "JireskopZ";
-                dataGridView1.Columns[11].Name = "ivmeX";
-                dataGridView1.Columns[12].Name = "ivmeY";
-                dataGridView1.Columns[13].Name = "ivmeZ";
-                dataGridView1.Columns[14].Name = "Durum";
-                dataGridView1.Columns[15].Name = "CRC";
-                dataGridView1.Columns[16].Name = "Pil Gerilim";
-                dataGridView1.Columns[17].Name = "Sıcaklık";
-                dataGridView1.Columns[18].Name = "Hız";
-                dataGridView1.Columns[19].Name = "Tarih";
-                dataGridView1.Columns[20].Name = "Saat";
-                dataGridView1.Columns[21].Name = "Yunuslama Açısı";
-                dataGridView1.Columns[22].Name = "Payload Sicaklik";
-                dataGridView1.Columns[23].Name = "Payload İrtifa";
-                dataGridView1.Columns[24].Name = "Basinc";
-                dataGridView1.Columns[25].Name = "Nem";
-            }
-            catch (Exception ex) { Log(ex.ToString()); }
         }
         private void connectButton_Click(object sender, EventArgs e)
         {
@@ -776,12 +838,34 @@ namespace arayüz_örnek
         }
         private void timer1_Tick(object sender, EventArgs e)//Unity Simulation Into panel_unity Timer
         {
+            if (unitywindowtime == -1)
+            {
+                try//Unity Simulation App Starts And Putting into panel_unity on UI
+                {
+                    string _3DSimExePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"\3D\3D Sim";
+                    ProcessStartInfo startInfo = new ProcessStartInfo();
+                    startInfo.FileName = _3DSimExePath;
+                    startInfo.WindowStyle = ProcessWindowStyle.Maximized;
+                    simApplication = Process.Start(startInfo);
+                    simApplication.WaitForInputIdle();
+                    MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
+                    SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
+                    MakeExternalWindowBorderless(simApplication.MainWindowHandle);
+                    unitywindowtime = 0;
+                }
+                catch (Exception ex) { Log(ex.ToString()); }
+            }
+            Log("Timer1" + unitywindowtime.ToString());
             unitywindowtime++;
             if (unitywindowtime <= 5)
             {
-                MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
-                SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
-                MakeExternalWindowBorderless(simApplication.MainWindowHandle);
+                try
+                {
+                    MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
+                    SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
+                    MakeExternalWindowBorderless(simApplication.MainWindowHandle);
+                }
+                catch (Exception) { Log("Hata!"); }
             }
             else
             {
@@ -918,10 +1002,8 @@ namespace arayüz_örnek
             PAKET.Text = paket.ToString();
             paket = 0;
         }
-
         private void HYITimer_Tick(object sender, EventArgs e)
         {
-            Log("HYITimer_Tick");
             if (sendData && PackageCompleted(HYIPackage))
             {
                 //crc
@@ -931,12 +1013,38 @@ namespace arayüz_örnek
             }
         }
 
+        private void button2_Click(object sender, EventArgs e)
+        {
+            try//Unity Simulation App Starts And Putting into panel_unity on UI
+            {
+                string _3DSimExePath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + @"\3D\3D Sim";
+                ProcessStartInfo startInfo = new ProcessStartInfo();
+                startInfo.FileName = _3DSimExePath;
+                startInfo.WindowStyle = ProcessWindowStyle.Maximized;
+                simApplication = Process.Start(startInfo);
+                simApplication.WaitForInputIdle();
+                MoveWindow(simApplication.MainWindowHandle, 0, 0, panel_unity.Width, panel_unity.Height, true);
+                SetParent(simApplication.MainWindowHandle, panel_unity.Handle);
+                MakeExternalWindowBorderless(simApplication.MainWindowHandle);
+                unitywindowtime = 0;
+                timer1.Enabled = true;
+                timer1.Start();
+            }
+            catch (Exception ex) { Log(ex.ToString()); }
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            if(xyz==6)
+                xyz = 1;
+            else
+                xyz++;
+        }
+
         private void RefreshButton_Click(object sender, EventArgs e)//Refresh Com Ports Button
         {
             try
-            {
-                ListComPorts();
-            }
+            { ListComPorts(); }
             catch (Exception ex) { Log(ex.ToString()); }
         }
     }
